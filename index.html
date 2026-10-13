@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101827">
+<title>Передача файлов по QR</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121d30;--panel2:#18263d;--line:#2b3b55;--text:#eef4ff;--muted:#a9b8cf;--accent:#77e0c0;--blue:#82b7ff;--danger:#ff9a9a}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at top,#162944 0,#0b1220 58%);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;min-height:100vh}
+main{width:min(900px,100%);margin:0 auto;padding:26px 16px 50px}
+header{text-align:center;margin:8px 0 24px}
+h1{font-size:clamp(26px,5vw,38px);line-height:1.15;margin:0 0 10px}
+header p{color:var(--muted);margin:0 auto;max-width:620px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.card{background:rgba(18,29,48,.94);border:1px solid var(--line);border-radius:20px;padding:20px;min-width:0;box-shadow:0 14px 40px #0002}
+.card h2{font-size:19px;margin:0 0 10px}
+.muted{color:var(--muted);font-size:14px}
+button,.filebutton{border:0;border-radius:12px;background:var(--accent);color:#082018;font-weight:750;font-size:15px;padding:12px 16px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+button:disabled{opacity:.45;cursor:not-allowed}
+.secondary{background:#263a57;color:var(--text);border:1px solid #405675}
+#qr{background:#fff;border-radius:12px;padding:10px;min-height:20px;display:inline-block;margin:12px 0;max-width:100%}
+#qr img,#qr canvas{display:block;max-width:100%;height:auto}
+.center{text-align:center}
+.status{padding:11px 13px;background:#0c1728;border:1px solid var(--line);border-radius:12px;margin-top:14px;color:var(--muted);overflow-wrap:anywhere}
+.status.ok{color:var(--accent);border-color:#2b7667}
+.status.err{color:var(--danger);border-color:#82444a}
+#connectionCode{font:13px ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;color:var(--blue)}
+input[type=file]{display:none}
+.filebutton{margin-top:8px}
+.filebutton.disabled{opacity:.45;pointer-events:none}
+#fileName{margin-top:10px;overflow-wrap:anywhere}
+.progress-wrap{margin-top:14px;display:none}
+progress{width:100%;height:12px;accent-color:var(--accent)}
+#progressText{font-size:13px;color:var(--muted);margin-top:4px}
+#received{display:grid;gap:8px;margin-top:12px}
+.received-file{padding:12px;border-radius:12px;background:#0c1728;border:1px solid var(--line);overflow-wrap:anywhere}
+.received-file a{color:var(--accent);font-weight:700}
+.small{font-size:12px;color:var(--muted);margin-top:16px}
+hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+@media(max-width:650px){.grid{grid-template-columns:1fr}main{padding:20px 12px 36px}.card{padding:17px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>📲 Передача файлов по QR</h1>
+  <p>Соедини телефон и компьютер, затем отправляй файлы в обе стороны. Файлы передаются напрямую между устройствами — они не загружаются на сайт.</p>
+</header>
+
+<div class="grid">
+  <section class="card">
+    <h2>1. Создать соединение</h2>
+    <p class="muted">Нажми кнопку на одном устройстве и отсканируй QR-код камерой второго устройства.</p>
+    <button id="createBtn">Создать QR-код</button>
+    <div class="center"><div id="qr" aria-label="QR-код" hidden></div></div>
+    <div id="roomText" class="muted"></div>
+    <div id="hostStatus" class="status">Соединение ещё не создано.</div>
+  </section>
+
+  <section class="card">
+    <h2>2. Подключиться</h2>
+    <p class="muted">Открой ссылку из QR-кода. Если ты уже открыл эту страницу на втором устройстве, используй кнопку ниже и введи код первого устройства.</p>
+    <label for="peerCode" class="muted">Код первого устройства</label>
+    <input id="peerCode" autocomplete="off" placeholder="Вставь код соединения"
+      style="display:block;width:100%;margin:7px 0 10px;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0c1728;color:var(--text)">
+    <button id="connectBtn" class="secondary">Подключиться по коду</button>
+    <div id="joinStatus" class="status">Ожидание подключения.</div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:16px">
+  <h2>3. Отправить файл</h2>
+  <p class="muted">Сначала дождись статуса «Устройства соединены». Поддерживаются файлы до 20 МБ за одну отправку.</p>
+  <input type="file" id="fileInput">
+  <label id="chooseFile" for="fileInput" class="filebutton disabled">Выбрать файл</label>
+  <button id="sendBtn" disabled>Отправить файл</button>
+  <div id="fileName" class="muted">Файл не выбран.</div>
+  <div class="progress-wrap" id="progressWrap">
+    <progress id="progress" max="100" value="0"></progress>
+    <div id="progressText">Подготовка…</div>
+  </div>
+  <div id="transferStatus" class="status">Передача пока не началась.</div>
+  <hr>
+  <h2>Полученные файлы</h2>
+  <div id="received"><div class="muted">Здесь появятся ссылки на принятые файлы.</div></div>
+  <p class="small">Совет: не закрывай вкладку и не блокируй экран до завершения передачи. Для соединения устройствам нужен интернет для обмена служебными данными; сами файлы обычно идут напрямую через WebRTC. В некоторых сетях прямое соединение может быть недоступно.</p>
+</section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"
+        onerror="this.onerror=null;this.src='https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js'"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(() => {
+  const MAX_SIZE = 20 * 1024 * 1024;
+  const CHUNK_SIZE = 16 * 1024;
+  const $ = id => document.getElementById(id);
+  let peer = null, conn = null, selectedFile = null, incoming = null;
+  let qrInstance = null;
+
+  function status(id, message, kind='') {
+    const el = $(id);
+    el.textContent = message;
+    el.className = 'status' + (kind ? ' ' + kind : '');
+  }
+  function connected() {
+    return !!(conn && conn.open);
+  }
+  function updateControls() {
+    $('chooseFile').classList.toggle('disabled', !connected());
+    $('sendBtn').disabled = !connected() || !selectedFile;
+  }
+  function bytes(n) {
+    if (n < 1024) return n + ' Б';
+    if (n < 1024*1024) return (n/1024).toFixed(1) + ' КБ';
+    return (n/1024/1024).toFixed(2) + ' МБ';
+  }
+  function setConnected(c) {
+    conn = c;
+    conn.on('open', () => {
+      status('hostStatus', 'Устройства соединены. Можно передавать файлы.', 'ok');
+      status('joinStatus', 'Устройства соединены. Можно передавать файлы.', 'ok');
+      status('transferStatus', 'Готово к передаче.', 'ok');
+      updateControls();
+    });
+    conn.on('data', handleData);
+    conn.on('close', () => {
+      status('hostStatus', 'Соединение закрыто. Создай новый QR-код или подключись заново.');
+      status('joinStatus', 'Соединение закрыто. Подключись заново.');
+      updateControls();
+    });
+    conn.on('error', err => {
+      status('transferStatus', 'Ошибка соединения: ' + (err && err.message ? err.message : 'неизвестная ошибка'), 'err');
+    });
+    updateControls();
+  }
+  function createPeer(id) {
+    return new Promise((resolve, reject) => {
+      try {
+        if (typeof Peer === 'undefined') {
+          reject(new Error('Не загрузилась библиотека PeerJS. Проверь интернет, блокировщик рекламы или попробуй другой браузер.'));
+          return;
+        }
+        // Явно указываем официальный PeerJS Cloud, HTTPS и порт 443.
+        const options = {
+          host: '0.peerjs.com',
+          port: 443,
+          path: '/',
+          secure: true,
+          key: 'peerjs',
+          debug: 2,
+          config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+        };
+        const p = id ? new Peer(id, options) : new Peer(options);
+        p.on('open', () => resolve(p));
+        p.on('error', err => {
+          const type = err && err.type ? err.type : 'unknown';
+          const detail = err && err.message ? err.message : '';
+          if (type === 'unavailable-id' || type === 'peer-unavailable') {
+            reject(new Error('Код недоступен. Создай новый QR-код и подключись снова.'));
+          } else if (type === 'server-error') {
+            reject(new Error('PeerJS Cloud не выдал ID (server-error). Проверь, открывается ли https://0.peerjs.com/peerjs/id?key=peerjs . Если нет — проблема на стороне сервера или доступ к нему блокируется; один HTML-файл это не исправит.'));
+          } else if (type === 'network' || type === 'socket-error' || type === 'socket-closed') {
+            reject(new Error('Нет соединения с PeerJS Cloud (' + type + '). Проверь доступ к 0.peerjs.com по HTTPS/443.'));
+          } else {
+            reject(new Error('PeerJS: ' + type + (detail ? ' — ' + detail : '')));
+          }
+        });
+      } catch (e) { reject(e); }
+    });
+  }
+  async function ensurePeer() {
+    if (peer && !peer.destroyed) return peer;
+    peer = await createPeer();
+    peer.on('connection', c => setConnected(c));
+    return peer;
+  }
+  async function makeRoom() {
+    $('createBtn').disabled = true;
+    status('hostStatus', 'Создаю соединение…');
+    try {
+      if (peer && !peer.destroyed) peer.destroy();
+      peer = await createPeer();
+      peer.on('connection', c => setConnected(c));
+      const link = new URL(window.location.href);
+      link.searchParams.set('peer', peer.id);
+      link.hash = '';
+      $('qr').hidden = false;
+      $('qr').innerHTML = '';
+      qrInstance = new QRCode($('qr'), {text: link.href, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M});
+      $('roomText').innerHTML = 'Код соединения: <div id="connectionCode"></div><button id="copyCode" class="secondary" style="margin-top:8px">Копировать код</button>';
+      $('connectionCode').textContent = peer.id;
+      $('copyCode').addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(peer.id); status('hostStatus', 'Код скопирован. Отправь его второму устройству.', 'ok'); }
+        catch (_) { status('hostStatus', 'Код: ' + peer.id); }
+      });
+      status('hostStatus', 'QR-код готов. Отсканируй его вторым устройством.', 'ok');
+    } catch (e) {
+      status('hostStatus', e.message || 'Не удалось создать соединение.', 'err');
+    } finally { $('createBtn').disabled = false; }
+  }
+  async function connectTo(code) {
+    code = (code || '').trim();
+    if (!code) { status('joinStatus', 'Введи код первого устройства.', 'err'); return; }
+    $('connectBtn').disabled = true;
+    status('joinStatus', 'Подключаюсь…');
+    try {
+      if (peer && !peer.destroyed) peer.destroy();
+      peer = await createPeer();
+      peer.on('connection', c => setConnected(c));
+      const c = peer.connect(code, {reliable:true, serialization:'binary'});
+      setConnected(c);
+      c.on('open', () => {
+        status('joinStatus', 'Подключено к первому устройству.', 'ok');
+      });
+      c.on('error', e => status('joinStatus', 'Не удалось подключиться: ' + (e.message || 'проверь код и интернет'), 'err'));
+    } catch (e) {
+      status('joinStatus', e.message || 'Не удалось подключиться.', 'err');
+    } finally { $('connectBtn').disabled = false; }
+  }
+
+  $('createBtn').addEventListener('click', makeRoom);
+  $('connectBtn').addEventListener('click', () => connectTo($('peerCode').value));
+  $('fileInput').addEventListener('change', () => {
+    selectedFile = $('fileInput').files[0] || null;
+    if (selectedFile && selectedFile.size > MAX_SIZE) {
+      status('transferStatus', 'Файл больше 20 МБ. Выбери файл меньшего размера.', 'err');
+      selectedFile = null;
+      $('fileInput').value = '';
+    }
+    $('fileName').textContent = selectedFile ? selectedFile.name + ' · ' + bytes(selectedFile.size) : 'Файл не выбран.';
+    updateControls();
+  });
+
+  $('sendBtn').addEventListener('click', async () => {
+    if (!connected() || !selectedFile) return;
+    const file = selectedFile;
+    $('sendBtn').disabled = true;
+    $('progressWrap').style.display = 'block';
+    $('progress').value = 0;
+    status('transferStatus', 'Отправляю «' + file.name + '»…');
+    try {
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      conn.send({type:'file-start', name:file.name, size:file.size, mime:file.type || 'application/octet-stream', totalChunks});
+      for (let i = 0; i < totalChunks; i++) {
+        if (!connected()) throw new Error('Соединение потеряно');
+        const part = await file.slice(i * CHUNK_SIZE, Math.min(file.size, (i+1)*CHUNK_SIZE)).arrayBuffer();
+        // Small pacing helps avoid overwhelming the browser's WebRTC send buffer.
+        while (conn && conn.open && conn.dataChannel && conn.dataChannel.bufferedAmount > 512 * 1024) {
+          await new Promise(r => setTimeout(r, 25));
+        }
+        conn.send(part);
+        if (i % 8 === 0 || i === totalChunks - 1) {
+          const pct = Math.round((i+1) / totalChunks * 100);
+          $('progress').value = pct;
+          $('progressText').textContent = pct + '% · ' + bytes(Math.min(file.size, (i+1)*CHUNK_SIZE)) + ' из ' + bytes(file.size);
+        }
+      }
+      conn.send({type:'file-end', name:file.name});
+      status('transferStatus', 'Файл отправлен. Если принимающее устройство получило его, ссылка появится у него.', 'ok');
+      $('progress').value = 100;
+      $('progressText').textContent = 'Отправка завершена';
+    } catch (e) {
+      status('transferStatus', 'Передача прервана: ' + (e.message || 'ошибка'), 'err');
+    } finally {
+      $('sendBtn').disabled = !connected() || !selectedFile;
+    }
+  });
+
+  function handleData(data) {
+    if (data && typeof data === 'object' && !(data instanceof ArrayBuffer) && !(data instanceof Blob)) {
+      if (data.type === 'file-start') {
+        incoming = {name:data.name || 'file', size:Number(data.size)||0, mime:data.mime || 'application/octet-stream',
+          totalChunks:Number(data.totalChunks)||0, chunks:[], receivedChunks:0, receivedBytes:0};
+        $('progressWrap').style.display = 'block';
+        $('progress').value = 0;
+        $('progressText').textContent = 'Получение: ' + incoming.name;
+        status('transferStatus', 'Получаю «' + incoming.name + '»…');
+      } else if (data.type === 'file-end') {
+        finishIncoming();
+      }
+      return;
+    }
+    if (!incoming) return;
+    const addChunk = chunk => {
+      incoming.chunks.push(chunk);
+      incoming.receivedChunks++;
+      incoming.receivedBytes += chunk.byteLength || chunk.size || 0;
+      const pct = incoming.totalChunks ? Math.min(100, Math.round(incoming.receivedChunks/incoming.totalChunks*100)) : 0;
+      $('progress').value = pct;
+      $('progressText').textContent = 'Получено ' + pct + '% · ' + bytes(incoming.receivedBytes) + ' из ' + bytes(incoming.size);
+      if (incoming.totalChunks && incoming.receivedChunks >= incoming.totalChunks) finishIncoming();
+    };
+    if (data instanceof ArrayBuffer) addChunk(data);
+    else if (data instanceof Blob) data.arrayBuffer().then(addChunk);
+    else if (data && data.buffer instanceof ArrayBuffer) addChunk(data.buffer);
+  }
+  function finishIncoming() {
+    if (!incoming) return;
+    const f = incoming;
+    incoming = null;
+    const blob = new Blob(f.chunks, {type:f.mime});
+    const url = URL.createObjectURL(blob);
+    if ($('received').children.length === 1 && $('received').firstElementChild.classList.contains('muted')) $('received').innerHTML = '';
+    const item = document.createElement('div');
+    item.className = 'received-file';
+    const name = document.createElement('div');
+    name.textContent = '📄 ' + f.name + ' · ' + bytes(blob.size);
+    const a = document.createElement('a');
+    a.href = url; a.download = f.name; a.textContent = 'Скачать файл'; a.style.display = 'inline-block'; a.style.marginTop = '6px';
+    item.append(name, a);
+    $('received').prepend(item);
+    $('progress').value = 100;
+    $('progressText').textContent = 'Получение завершено';
+    status('transferStatus', 'Файл «' + f.name + '» получен. Нажми «Скачать файл».', 'ok');
+  }
+
+  // A QR link can open this page with ?peer=ID and start the connection automatically.
+  const params = new URLSearchParams(window.location.search);
+  const targetPeer = params.get('peer');
+  if (targetPeer) {
+    $('peerCode').value = targetPeer;
+    status('joinStatus', 'Ссылка из QR-кода распознана. Подключаюсь…');
+    setTimeout(() => connectTo(targetPeer), 250);
+  }
+  updateControls();
+})();
+</script>
+</body>
+</html>
